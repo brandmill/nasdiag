@@ -57,7 +57,17 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("network", "storage", "local", "external", "concurrent", "suite"):
         _add_common(sub.add_parser(name))
+    gp = sub.add_parser("gui", help="launch local web UI")
+    gp.add_argument("--port", type=int, default=8765)
+    gp.add_argument("--no-browser", action="store_true")
+    gp.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
+
+    if args.cmd == "gui":
+        from . import gui, log as _log
+        _log.setup(verbose=args.verbose)
+        gui.serve(port=args.port, open_browser=not args.no_browser)
+        return 0
 
     logfile = log.setup(verbose=args.verbose)
     logging.info("nasdiag %s starting (mode=%s)", args.cmd, args.mode)

@@ -20,6 +20,7 @@ iperf3 -s -D             # daemonize the iperf3 server (port 5201)
 ## Commands
 
 ```
+python3 -m nasdiag gui          # web UI on http://127.0.0.1:8765 (default)
 python3 -m nasdiag network
 python3 -m nasdiag storage
 python3 -m nasdiag local
@@ -27,6 +28,8 @@ python3 -m nasdiag external
 python3 -m nasdiag concurrent
 python3 -m nasdiag suite
 ```
+
+The `gui` subcommand opens your browser to a local form: pick host, tick the NAS volumes you want to test, optionally pick an external SSD, choose polite/full mode, click Run. Output streams live; the HTML report embeds inline when finished.
 
 No flags needed for the common case — nasdiag scans your mounted volumes and prompts you to pick the NAS share and the external SSD interactively. The NAS host is auto-extracted from the SMB share's mount source, so `--host` is usually unnecessary.
 
