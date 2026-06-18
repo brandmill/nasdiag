@@ -8,6 +8,7 @@ log = logging.getLogger(__name__)
 
 _MOUNT_RE = re.compile(r"^(.+?)\s+on\s+(.+?)\s+\((\w+)[,\s)]")
 _SMB_SRC = re.compile(r"^//(?:[^@/]+@)?([^/]+)/")
+_MDNS_SERVICE = re.compile(r"\._[a-z]+\._tcp\.local$", re.IGNORECASE)
 _NFS_SRC = re.compile(r"^([^:]+):")
 
 REMOTE_TYPES = {"smbfs", "nfs"}
@@ -40,7 +41,7 @@ def parse_mount(text: str | None = None) -> list[Mount]:
         if fstype == "smbfs":
             h = _SMB_SRC.match(source)
             if h:
-                host = h.group(1)
+                host = _MDNS_SERVICE.sub(".local", h.group(1))
         elif fstype == "nfs":
             h = _NFS_SRC.match(source)
             if h:
