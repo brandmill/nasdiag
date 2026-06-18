@@ -1,0 +1,122 @@
+═════════════════════════════════════════════════════════════════════════
+  nasdiag — Mac setup guide
+═════════════════════════════════════════════════════════════════════════
+
+WHAT THIS DOES
+  Diagnoses why DaVinci Resolve / video editing feels slow on this Mac.
+  Tests the network, the NAS, your external SSD (if any), and your Mac
+  itself, then tells you which one is the bottleneck.
+
+  Safe to run during work hours (uses small files, default "polite" mode).
+
+
+─────────────────────────────────────────────────────────────────────────
+  STEP 1 — Open Terminal
+─────────────────────────────────────────────────────────────────────────
+
+  Press ⌘ + Space → type "Terminal" → hit Enter.
+
+
+─────────────────────────────────────────────────────────────────────────
+  STEP 2 — First time only: install Homebrew (skip if already installed)
+─────────────────────────────────────────────────────────────────────────
+
+  To check: type `brew --version` and hit Enter. If it prints a version,
+  skip this step. If it says "command not found", paste this:
+
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  It will ask for your Mac password. Takes ~5 minutes.
+  At the end it tells you to run two `echo` lines to "add Homebrew to your
+  PATH" — copy + run those exactly, then close and reopen Terminal.
+
+
+─────────────────────────────────────────────────────────────────────────
+  STEP 3 — Install + launch nasdiag (one paste, every time)
+─────────────────────────────────────────────────────────────────────────
+
+  Paste this whole line, hit Enter, wait ~2 minutes the first time:
+
+    brew install iperf3 fio && pip3 install --break-system-packages psutil && ([ -d ~/nasdiag ] && cd ~/nasdiag && git pull || git clone https://github.com/brandmill/nasdiag ~/nasdiag) && cd ~/nasdiag && python3 -m nasdiag gui
+
+  • The first time `git` runs, macOS may pop up "Install Command Line
+    Tools" — click Install (3-5 minutes). Then re-paste the line above.
+  • Your browser will open automatically to http://127.0.0.1:8765/
+  • To re-run later: just paste the same line. It auto-updates.
+
+
+─────────────────────────────────────────────────────────────────────────
+  STEP 4 — In the browser
+─────────────────────────────────────────────────────────────────────────
+
+  1.  NAS host + SSH user are auto-filled. Leave them.
+  2.  NAS volumes — tick the share(s) you actually edit from (e.g. WIP).
+  3.  External SSD — pick your Resolve cache disk if you use one,
+      otherwise leave on "skip".
+  4.  Mode:
+        polite (default) — 1 GB files, ~3-5 min, safe during work
+        full              — 16 GB files, ~15 min, real diagnostic
+                            (run after hours or at lunch)
+  5.  Click "Run suite".
+
+  When it finishes, the verdict + full report appear at the bottom.
+
+
+─────────────────────────────────────────────────────────────────────────
+  STEP 5 (optional) — Enable NAS-side telemetry
+─────────────────────────────────────────────────────────────────────────
+
+  Lets nasdiag also show NAS CPU / NIC / disk during each test.
+  Run these on the Mac (once per Mac):
+
+    ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+    cat ~/.ssh/id_ed25519.pub
+
+  Copy the printed line (starts with `ssh-ed25519 …`), then SSH into the
+  NAS:  ssh brandy@192.168.8.112  and run:
+
+    mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    echo 'PASTE THE LINE HERE' >> ~/.ssh/authorized_keys
+    chmod 600 ~/.ssh/authorized_keys
+
+  After that, NAS telemetry shows up automatically.
+
+
+─────────────────────────────────────────────────────────────────────────
+  TROUBLESHOOTING
+─────────────────────────────────────────────────────────────────────────
+
+  • Browser didn't open
+        Open http://127.0.0.1:8765/ manually.
+
+  • "brew: command not found"
+        Run STEP 2 above.
+
+  • "ssh: connect to host … port 22: Connection refused"
+        Only relevant for STEP 5. Means SSH isn't enabled on the NAS or
+        the Mac. Ask Brandy.
+
+  • Test takes way longer than expected
+        That's a real signal — the slow phase is the bottleneck.
+        Wait for it to finish; the verdict will tell you which one.
+
+  • macOS asks "Terminal would like to access files on …"
+        Click Allow. nasdiag needs to read/write its own temp file to
+        measure the disk.
+
+  • You see "psutil not installed" in the output
+        That means STEP 3 didn't install psutil. Re-run the STEP 3 paste.
+
+  • Anything else
+        The log file path is printed at the very end of every run
+        (in ~/.nasdiag/logs/). Send that file to Brandy.
+
+
+─────────────────────────────────────────────────────────────────────────
+  WHERE THE RESULTS LIVE
+─────────────────────────────────────────────────────────────────────────
+
+  HTML reports:   ~/.nasdiag/reports/   (one file per run)
+  Log files:      ~/.nasdiag/logs/      (one file per run)
+
+═════════════════════════════════════════════════════════════════════════
