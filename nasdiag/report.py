@@ -1,5 +1,8 @@
 import html
 import logging
+import re
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,13 +15,22 @@ log = logging.getLogger(__name__)
 
 REPORT_DIR = Path.home() / ".nasdiag" / "reports"
 
-# Thresholds used for the verdict — tune to taste.
 NET_OK_GBIT = 8.0
 NET_DEGRADED_GBIT = 5.0
-NAS_SEQ_OK_MBPS = 400.0       # below this is a slow single-stream NAS
-EXT_SSD_OK_MBPS = 500.0       # SATA SSD floor; NVMe should easily exceed
+NAS_SEQ_OK_MBPS = 400.0
+EXT_SSD_OK_MBPS = 500.0
 P99_STALL_MS = 100.0
 PLATEAU_RATIO = 1.2
+
+
+@dataclass
+class VolumeResults:
+    path: str
+    storage: list[StorageResult] = field(default_factory=list)
+    concurrent: list[RampPoint] = field(default_factory=list)
+
+    def by_test(self) -> dict[str, StorageResult]:
+        return {r.test: r for r in self.storage}
 
 
 @dataclass
@@ -26,111 +38,132 @@ class Report:
     started_at: float = field(default_factory=time.time)
     mode: str = "polite"
     host: str = ""
-    share_path: str = ""
     local_path: str = ""
     external_path: str = ""
+    nic: str = ""
     network: list[NetResult] = field(default_factory=list)
     local_storage: list[StorageResult] = field(default_factory=list)
     external_storage: list[StorageResult] = field(default_factory=list)
-    nas_storage: list[StorageResult] = field(default_factory=list)
-    concurrent: list[RampPoint] = field(default_factory=list)
-
-    def by_test(self, results: list[StorageResult]) -> dict[str, StorageResult]:
-        return {r.test: r for r in results}
+    volumes: list[VolumeResults] = field(default_factory=list)
 
 
 def _net_avg(net: list[NetResult]) -> float:
     return sum(r.gbit_per_sec for r in net) / len(net) if net else 0.0
 
 
+def _is_wifi(nic: str) -> bool:
+    if sys.platform != "darwin" or not nic:
+        return False
+    try:
+        out = subprocess.check_output(
+            ["networksetup", "-listallhardwareports"], text=True, timeout=2)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return False
+    blocks = out.split("\n\n")
+    for block in blocks:
+        if f"Device: {nic}" in block and ("Wi-Fi" in block or "AirPort" in block):
+            return True
+    return False
+
+
 def verdict(r: Report) -> list[str]:
     lines: list[str] = []
+    net_avg = _net_avg(r.network)
+    wifi = _is_wifi(r.nic)
+    network_is_bottleneck = net_avg > 0 and net_avg < NET_DEGRADED_GBIT
 
     # NETWORK
     if r.network:
-        avg = _net_avg(r.network)
-        if avg >= NET_OK_GBIT:
-            lines.append(f"✓ NETWORK fine: {avg:.1f} Gbit/s avg (vs 10 GbE theoretical).")
-        elif avg >= NET_DEGRADED_GBIT:
-            lines.append(f"~ NETWORK acceptable: {avg:.1f} Gbit/s avg — workable but not maxing the 10 GbE link.")
+        if wifi:
+            lines.append(f"~ NETWORK: {net_avg:.2f} Gbit/s on Wi-Fi ({r.nic}) — "
+                         f"this is your wireless link, not the NAS. Test from a wired Mac for real NAS numbers.")
+        elif net_avg >= NET_OK_GBIT:
+            lines.append(f"✓ NETWORK fine: {net_avg:.2f} Gbit/s (vs 10 GbE theoretical).")
+        elif net_avg >= NET_DEGRADED_GBIT:
+            lines.append(f"~ NETWORK acceptable: {net_avg:.2f} Gbit/s — workable but not maxing the 10 GbE link.")
         else:
-            lines.append(f"⚠ NETWORK degraded: {avg:.1f} Gbit/s avg — check NIC negotiation, switch port, cable.")
+            lines.append(f"⚠ NETWORK degraded: {net_avg:.2f} Gbit/s — check NIC negotiation, switch port, cable.")
 
-    # EXTERNAL SSD (Resolve cache disk)
+    # EXTERNAL SSD
     if r.external_storage:
-        m = r.by_test(r.external_storage)
+        m = {s.test: s for s in r.external_storage}
         sr = m.get("seq_read")
         if sr and sr.mb_per_sec < EXT_SSD_OK_MBPS:
             lines.append(f"⚠ EXTERNAL CACHE SSD slow: {sr.mb_per_sec:.0f} MB/s seq read — "
-                         f"the cache disk itself may be a bottleneck.")
+                         f"cache disk may be a bottleneck.")
         elif sr:
             lines.append(f"✓ EXTERNAL CACHE SSD fine: {sr.mb_per_sec:.0f} MB/s seq read.")
 
-    # NAS SINGLE-STREAM
-    nas_seq_solo: float | None = None
-    if r.nas_storage:
-        m = r.by_test(r.nas_storage)
-        sr = m.get("seq_read")
-        if sr:
-            nas_seq_solo = sr.mb_per_sec
-            if sr.mb_per_sec < NAS_SEQ_OK_MBPS:
-                lines.append(f"⚠ NAS single-stream slow: {sr.mb_per_sec:.0f} MB/s seq read solo — "
-                             f"slow even uncontended.")
-            else:
-                lines.append(f"✓ NAS single-stream fine: {sr.mb_per_sec:.0f} MB/s seq read solo.")
+    # PER-VOLUME NAS
+    if r.volumes:
+        if network_is_bottleneck:
+            lines.append(f"  (NAS volumes measured through {net_avg:.2f} Gbit/s link — "
+                         f"numbers below are network-bound, not NAS-bound)")
+        for v in r.volumes:
+            _verdict_volume(v, lines, network_is_bottleneck)
 
-    # CONCURRENT
-    if r.concurrent:
-        peak = max(p.mb_per_sec for p in r.concurrent)
-        plateau_n: int | None = None
-        for i in range(1, len(r.concurrent)):
-            if r.concurrent[i].mb_per_sec < r.concurrent[i - 1].mb_per_sec * PLATEAU_RATIO:
-                plateau_n = r.concurrent[i - 1].n_workers
-                break
-        spike_n = next((p.n_workers for p in r.concurrent if p.latency_ms_p99 > P99_STALL_MS), None)
-        if plateau_n is not None:
-            first_mb = r.concurrent[0].mb_per_sec
-            last_mb = r.concurrent[-1].mb_per_sec
-            collapse = ""
-            if last_mb < first_mb:
-                collapse = f" (collapses from {first_mb:.0f} → {last_mb:.0f} MB/s)"
-            lines.append(f"⚠ NAS CONCURRENT: throughput plateaus at {plateau_n} worker(s){collapse}; peak {peak:.0f} MB/s.")
-        else:
-            lines.append(f"✓ NAS CONCURRENT: scales across tested range (peak {peak:.0f} MB/s).")
-        if spike_n is not None:
-            lines.append(f"⚠ NAS CONCURRENT: p99 latency > {P99_STALL_MS:.0f} ms at {spike_n} worker(s) — stalls likely under load.")
-
-    # BOTTLENECK LOCALIZATION (final line)
-    final = _localize_bottleneck(r, nas_seq_solo)
+    # FINAL
+    final = _localize_bottleneck(r, wifi=wifi)
     if final:
         lines.append("")
         lines.append(final)
     return lines
 
 
-def _localize_bottleneck(r: Report, nas_seq_solo: float | None) -> str:
+def _verdict_volume(v: VolumeResults, lines: list[str], net_capped: bool):
+    name = Path(v.path).name or v.path
+    m = v.by_test()
+    sr = m.get("seq_read")
+    if sr:
+        if net_capped:
+            lines.append(f"  · {name}: {sr.mb_per_sec:.0f} MB/s seq read (link-capped)")
+        elif sr.mb_per_sec < NAS_SEQ_OK_MBPS:
+            lines.append(f"⚠ {name}: slow at {sr.mb_per_sec:.0f} MB/s seq read solo.")
+        else:
+            lines.append(f"✓ {name}: {sr.mb_per_sec:.0f} MB/s seq read solo.")
+    if v.concurrent and not net_capped:
+        peak = max(p.mb_per_sec for p in v.concurrent)
+        plateau_n = _plateau(v.concurrent)
+        spike_n = next((p.n_workers for p in v.concurrent if p.latency_ms_p99 > P99_STALL_MS), None)
+        if plateau_n is not None:
+            first_mb = v.concurrent[0].mb_per_sec
+            last_mb = v.concurrent[-1].mb_per_sec
+            collapse = f" (collapses {first_mb:.0f}→{last_mb:.0f})" if last_mb < first_mb else ""
+            lines.append(f"⚠ {name} concurrent: plateaus at {plateau_n} worker(s){collapse}, peak {peak:.0f} MB/s")
+        if spike_n is not None:
+            lines.append(f"⚠ {name} concurrent: p99 > {P99_STALL_MS:.0f} ms at {spike_n} worker(s)")
+
+
+def _plateau(points: list[RampPoint]) -> int | None:
+    for i in range(1, len(points)):
+        if points[i].mb_per_sec < points[i - 1].mb_per_sec * PLATEAU_RATIO:
+            return points[i - 1].n_workers
+    return None
+
+
+def _localize_bottleneck(r: Report, wifi: bool) -> str:
     net_avg = _net_avg(r.network)
+    if wifi and net_avg < NET_OK_GBIT:
+        return ("→ BOTTLENECK: Wi-Fi link — the wireless connection is the limit. "
+                "Move to a wired Mac to diagnose the actual NAS.")
+    if net_avg and net_avg < NET_DEGRADED_GBIT:
+        return f"→ BOTTLENECK: NETWORK ({net_avg:.2f} Gbit/s) — fix the link first."
     ext_slow = False
     if r.external_storage:
-        sr = r.by_test(r.external_storage).get("seq_read")
+        m = {s.test: s for s in r.external_storage}
+        sr = m.get("seq_read")
         ext_slow = bool(sr and sr.mb_per_sec < EXT_SSD_OK_MBPS)
-    if r.concurrent:
-        first = r.concurrent[0].mb_per_sec
-        last = r.concurrent[-1].mb_per_sec
-        concurrent_collapses = len(r.concurrent) >= 2 and last < first
-    else:
-        concurrent_collapses = False
-    if net_avg and net_avg < NET_DEGRADED_GBIT:
-        return f"→ BOTTLENECK: NETWORK ({net_avg:.1f} Gbit/s) — fix the link first."
     if ext_slow:
         return "→ BOTTLENECK: external cache SSD — playback can stutter even without touching the NAS."
-    if concurrent_collapses:
-        return ("→ BOTTLENECK: NAS under concurrent load — single-stream is fine but the pool/NIC "
-                "can't sustain multiple editors.")
-    if nas_seq_solo is not None and nas_seq_solo < NAS_SEQ_OK_MBPS:
-        return "→ BOTTLENECK: NAS storage itself — even one editor maxes it out."
-    if r.network and r.nas_storage and r.concurrent:
-        return "→ NO CLEAR BOTTLENECK in measured layers — investigate client-side (Resolve cache size, OS, codecs)."
+    if r.volumes:
+        for v in r.volumes:
+            sr = v.by_test().get("seq_read")
+            if sr and sr.mb_per_sec < NAS_SEQ_OK_MBPS:
+                return f"→ BOTTLENECK: NAS volume {Path(v.path).name} — even one editor maxes it out."
+            if v.concurrent and len(v.concurrent) >= 2 and v.concurrent[-1].mb_per_sec < v.concurrent[0].mb_per_sec:
+                return f"→ BOTTLENECK: NAS volume {Path(v.path).name} collapses under concurrent load."
+    if r.network and r.volumes:
+        return "→ NO CLEAR BOTTLENECK in measured layers — investigate Resolve cache size, codecs, client load."
     return ""
 
 
@@ -139,23 +172,26 @@ def _localize_bottleneck(r: Report, nas_seq_solo: float | None) -> str:
 def to_console(r: Report) -> str:
     out = ["", "=" * 72, "SUMMARY", "=" * 72]
     if r.network:
-        out.append("\nNetwork (iperf3 vs 10 GbE):")
+        out.append(f"\nNetwork (iperf3 vs 10 GbE, nic={r.nic or '?'}):")
         for nr in r.network:
-            out.append(f"  {nr.direction:<10s} {nr.gbit_per_sec:5.2f} Gbit/s   "
-                       f"retx={nr.retransmits}")
+            out.append(f"  {nr.direction:<10s} {nr.gbit_per_sec:5.2f} Gbit/s   retx={nr.retransmits}")
     for label, results in [("Local SSD", r.local_storage),
-                           ("External SSD", r.external_storage),
-                           ("NAS", r.nas_storage)]:
+                           ("External SSD", r.external_storage)]:
         if results:
             out.append(f"\nStorage — {label}:")
             for sr in results:
                 out.append(f"  {sr.test:9s}  {sr.mb_per_sec:8.1f} MB/s   "
                            f"{sr.iops:8.0f} IOPS   p99 {sr.latency_ms_p99:6.2f} ms")
-    if r.concurrent:
-        out.append("\nConcurrent NAS readers:")
-        for p in r.concurrent:
-            out.append(f"  {p.n_workers:2d} worker(s)  {p.mb_per_sec:8.1f} MB/s   "
-                       f"p99 {p.latency_ms_p99:7.2f} ms")
+    for v in r.volumes:
+        out.append(f"\nNAS volume — {v.path}:")
+        for sr in v.storage:
+            out.append(f"  {sr.test:9s}  {sr.mb_per_sec:8.1f} MB/s   "
+                       f"{sr.iops:8.0f} IOPS   p99 {sr.latency_ms_p99:6.2f} ms")
+        if v.concurrent:
+            out.append(f"  concurrent:")
+            for p in v.concurrent:
+                out.append(f"    {p.n_workers:2d} worker(s)  {p.mb_per_sec:8.1f} MB/s   "
+                           f"p99 {p.latency_ms_p99:7.2f} ms")
     out.append("\n" + "-" * 72)
     out.append("VERDICT")
     out.append("-" * 72)
@@ -165,7 +201,7 @@ def to_console(r: Report) -> str:
     return "\n".join(out)
 
 
-# ---- HTML output ----------------------------------------------------------
+# ---- HTML -----------------------------------------------------------------
 
 _CSS = """
 * { box-sizing: border-box; }
@@ -173,6 +209,7 @@ body { background: #0d0d0d; color: #e4e4e4; font-family: -apple-system, BlinkMac
 .container { max-width: 1000px; margin: 0 auto; }
 h1 { color: #fff; margin: 0 0 6px; font-size: 22px; }
 h2 { color: #fff; margin: 32px 0 8px; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+h3 { color: #fff; margin: 20px 0 6px; font-size: 14px; }
 .meta { color: #888; font-size: 12px; margin-bottom: 16px; }
 table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-variant-numeric: tabular-nums; }
 th, td { padding: 6px 12px; text-align: right; border-bottom: 1px solid #222; font-size: 13px; }
@@ -192,8 +229,7 @@ svg { background: #0d0d0d; display: block; }
 """
 
 
-def _svg_bar_chart(rows: list[tuple[str, float]], unit: str, max_val: float | None = None,
-                   width: int = 600, row_h: int = 28) -> str:
+def _svg_bar_chart(rows, unit, max_val=None, width=600, row_h=28):
     if not rows:
         return ""
     max_val = max_val or max(v for _, v in rows) * 1.1 or 1.0
@@ -212,8 +248,7 @@ def _svg_bar_chart(rows: list[tuple[str, float]], unit: str, max_val: float | No
     return "".join(parts)
 
 
-def _svg_line_chart(points: list[tuple[float, float]], xlabel: str, ylabel: str, unit: str,
-                    width: int = 600, height: int = 220) -> str:
+def _svg_line_chart(points, xlabel, ylabel, unit, width=600, height=220):
     if len(points) < 2:
         return ""
     pad_l, pad_b, pad_t, pad_r = 56, 32, 16, 40
@@ -229,16 +264,13 @@ def _svg_line_chart(points: list[tuple[float, float]], xlabel: str, ylabel: str,
     def py(y): return pad_t + plot_h * (1 - y / y_max)
 
     parts = [f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg">']
-    # gridlines + y labels
     for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
         y = pad_t + plot_h * (1 - frac)
         v = y_max * frac
         parts.append(f'<line x1="{pad_l}" y1="{y}" x2="{pad_l + plot_w}" y2="{y}" class="gridline"/>')
         parts.append(f'<text x="{pad_l - 6}" y="{y + 4}" text-anchor="end" class="chart-label">{v:.0f}</text>')
-    # x labels
     for x in xs:
         parts.append(f'<text x="{px(x)}" y="{height - 12}" text-anchor="middle" class="chart-label">{int(x)}</text>')
-    # path
     path = " ".join(f"{px(x):.1f},{py(y):.1f}" for x, y in points)
     parts.append(f'<polyline points="{path}" class="line"/>')
     for x, y in points:
@@ -249,7 +281,7 @@ def _svg_line_chart(points: list[tuple[float, float]], xlabel: str, ylabel: str,
     return "".join(parts)
 
 
-def _verdict_html(r: Report) -> str:
+def _verdict_html(r):
     items = []
     for line in verdict(r):
         if not line:
@@ -265,7 +297,7 @@ def _verdict_html(r: Report) -> str:
     return "".join(items)
 
 
-def _storage_table(label: str, results: list[StorageResult]) -> str:
+def _storage_table(label, results):
     if not results:
         return ""
     rows = ["<table><thead><tr><th>test</th><th>MB/s</th><th>IOPS</th><th>p99 ms</th></tr></thead><tbody>"]
@@ -275,42 +307,44 @@ def _storage_table(label: str, results: list[StorageResult]) -> str:
                     f"<td>{sr.iops:.0f}</td>"
                     f"<td>{sr.latency_ms_p99:.2f}</td></tr>")
     rows.append("</tbody></table>")
-    return f"<h2>Storage — {html.escape(label)}</h2>" + "".join(rows)
+    return f"<h3>{html.escape(label)}</h3>" + "".join(rows)
 
 
-def to_html(r: Report) -> str:
+def to_html(r):
+    shares = ", ".join(html.escape(v.path) for v in r.volumes) or "—"
     parts = [
         "<!doctype html><html><head><meta charset='utf-8'>",
         f"<title>nasdiag report — {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r.started_at))}</title>",
         f"<style>{_CSS}</style></head><body><div class='container'>",
         "<h1>nasdiag report</h1>",
         f"<div class='meta'>{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r.started_at))} · "
-        f"mode={html.escape(r.mode)} · host={html.escape(r.host)} · share={html.escape(r.share_path)}</div>",
+        f"mode={html.escape(r.mode)} · host={html.escape(r.host)} · nic={html.escape(r.nic or '?')} · "
+        f"volumes={shares}</div>",
         "<div class='verdict'>", _verdict_html(r), "</div>",
     ]
-
     if r.network:
-        rows = [(f"{nr.direction}", nr.gbit_per_sec) for nr in r.network]
-        parts.append("<h2>Network — iperf3 (Gbit/s vs 10 GbE)</h2>")
-        parts.append(_svg_bar_chart(rows, unit="Gbit/s", max_val=THEORETICAL_GBIT))
-
-    parts.append(_storage_table("Local SSD", r.local_storage))
-    parts.append(_storage_table("External SSD (Resolve cache)", r.external_storage))
-    parts.append(_storage_table("NAS share", r.nas_storage))
-
-    if r.concurrent:
-        parts.append("<h2>Concurrent NAS readers — throughput</h2>")
-        parts.append(_svg_line_chart([(p.n_workers, p.mb_per_sec) for p in r.concurrent],
-                                     xlabel="workers", ylabel="aggregate", unit="MB/s"))
-        parts.append("<h2>Concurrent NAS readers — p99 latency</h2>")
-        parts.append(_svg_line_chart([(p.n_workers, p.latency_ms_p99) for p in r.concurrent],
-                                     xlabel="workers", ylabel="p99", unit="ms"))
-
+        rows = [(nr.direction, nr.gbit_per_sec) for nr in r.network]
+        parts.append("<h2>Network (Gbit/s vs 10 GbE)</h2>")
+        parts.append(_svg_bar_chart(rows, "Gbit/s", max_val=THEORETICAL_GBIT))
+    if r.local_storage or r.external_storage:
+        parts.append("<h2>Local disks</h2>")
+        parts.append(_storage_table("Internal SSD", r.local_storage))
+        parts.append(_storage_table("External SSD (Resolve cache)", r.external_storage))
+    for v in r.volumes:
+        parts.append(f"<h2>NAS volume — {html.escape(v.path)}</h2>")
+        parts.append(_storage_table("storage", v.storage))
+        if v.concurrent:
+            parts.append("<h3>concurrent readers — throughput</h3>")
+            parts.append(_svg_line_chart([(p.n_workers, p.mb_per_sec) for p in v.concurrent],
+                                         "workers", "aggregate", "MB/s"))
+            parts.append("<h3>concurrent readers — p99 latency</h3>")
+            parts.append(_svg_line_chart([(p.n_workers, p.latency_ms_p99) for p in v.concurrent],
+                                         "workers", "p99", "ms"))
     parts.append("</div></body></html>")
     return "".join(parts)
 
 
-def write_html(r: Report) -> Path:
+def write_html(r):
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORT_DIR / f"report-{time.strftime('%Y%m%d-%H%M%S', time.localtime(r.started_at))}.html"
     path.write_text(to_html(r))

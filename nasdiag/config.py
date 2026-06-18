@@ -20,7 +20,7 @@ FULL = {"size_gb": 16, "duration_s": 30, "concurrent_max": 8}
 @dataclass
 class RunConfig:
     host: str
-    share_path: str
+    share_paths: list[str]
     local_path: str
     external_path: str
     nas_user: str
@@ -33,9 +33,11 @@ class RunConfig:
     @classmethod
     def from_args(cls, args):
         mode = FULL if getattr(args, "mode", "polite") == "full" else POLITE
+        env_shares = [s for s in DEFAULTS["share_path"].split(":") if s]
+        arg_shares = list(args.share_path or [])
         return cls(
             host=args.host or DEFAULTS["host"],
-            share_path=args.share_path or DEFAULTS["share_path"],
+            share_paths=arg_shares or env_shares,
             local_path=args.local_path or DEFAULTS["local_path"],
             external_path=args.external_path or DEFAULTS["external_path"],
             nas_user=getattr(args, "nas_user", "") or DEFAULTS["nas_user"],

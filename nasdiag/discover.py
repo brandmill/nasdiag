@@ -101,3 +101,32 @@ def pick(mounts: list[Mount], prompt: str, allow_skip: bool = False) -> Mount | 
         except ValueError:
             pass
         print("  invalid choice")
+
+
+def pick_many(mounts: list[Mount], prompt: str, allow_skip: bool = False) -> list[Mount]:
+    if not mounts:
+        print(f"{prompt}\n  (none found)")
+        return []
+    if not sys.stdin.isatty():
+        log.warning("non-interactive shell and no paths passed; selecting all: %s",
+                    [m.path for m in mounts])
+        return mounts
+    print(prompt + "  (comma-separated, or 'a' for all)")
+    for i, m in enumerate(mounts, 1):
+        print(f"  {i}. {m.label()}")
+    if allow_skip:
+        print("  0. skip")
+    while True:
+        choice = input("  > ").strip().lower()
+        if allow_skip and choice == "0":
+            return []
+        if choice in ("a", "all"):
+            return mounts
+        try:
+            ids = [int(x) for x in choice.replace(" ", "").split(",") if x]
+            picked = [mounts[n - 1] for n in ids if 1 <= n <= len(mounts)]
+            if picked:
+                return picked
+        except (ValueError, IndexError):
+            pass
+        print("  invalid choice")

@@ -44,20 +44,23 @@ def _run(host: str, duration: int, reverse: bool) -> NetResult:
 
 
 def run(host: str, duration_s: int = 10, nas_user: str = "", nas_key: str = "",
-        nas_nic: str = "bond0") -> list[NetResult]:
+        nas_nic: str = "bond0") -> tuple[list[NetResult], str]:
     if not host:
         raise SystemExit("ERROR: --host required (or set NASDIAG_HOST).")
     print(f"NETWORK — iperf3 to {host}, {duration_s}s each direction")
     print(f"  iperf3 server hint: ssh {host} 'iperf3 -s -D'")
     results = []
+    client_nic = ""
     for reverse, label in [(False, "client → NAS  "), (True, "NAS → client  ")]:
         with telemetry.measure(host=host, nas_user=nas_user, nas_key=nas_key,
                                nas_nic=nas_nic) as m:
             r = _run(host, duration_s, reverse)
         results.append(r)
+        if m.client.nic:
+            client_nic = m.client.nic
         print(f"  {label} {r.gbit_per_sec:5.2f} Gbit/s   "
               f"({r.vs_theoretical():4.1f}% of 10GbE)   "
               f"retx={r.retransmits}")
         for line in m.summary_lines():
             print(f"            {line}")
-    return results
+    return results, client_nic
