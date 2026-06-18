@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.nasdiag/
+.nasdiag-tmp/
+kie-output/
+*.log
+.DS_Store
+.venv/
