@@ -2,7 +2,7 @@ import argparse
 import logging
 import sys
 
-from . import concurrent, discover, log, network, report, storage
+from . import concurrent, discover, log, network, profile, report, storage
 from .config import RunConfig
 
 
@@ -106,6 +106,11 @@ def main(argv=None):
             rpt = report.Report(mode=args.mode, host=cfg.host,
                                 local_path=cfg.local_path,
                                 external_path=cfg.external_path)
+            print("MAC PROFILE — collecting (1s)…")
+            rpt.profile = profile.collect(share_paths=cfg.share_paths)
+            for line in profile.profile_passes(rpt.profile):
+                print(line)
+            print()
             warn = cfg.cache_warning()
             if warn:
                 print(warn + "\n")

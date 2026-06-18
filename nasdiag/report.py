@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .concurrent import RampPoint
 from .network import NetResult, THEORETICAL_GBIT
+from .profile import MacProfile, profile_warnings, profile_passes
 from .storage import StorageResult
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class Report:
     local_storage: list[StorageResult] = field(default_factory=list)
     external_storage: list[StorageResult] = field(default_factory=list)
     volumes: list[VolumeResults] = field(default_factory=list)
+    profile: MacProfile = field(default_factory=MacProfile)
 
 
 def _net_avg(net: list[NetResult]) -> float:
@@ -102,8 +104,15 @@ def verdict(r: Report) -> list[str]:
         for v in r.volumes:
             _verdict_volume(v, lines, network_is_bottleneck)
 
+    # MAC PROFILE warnings
+    mac_warns = profile_warnings(r.profile)
+    if mac_warns:
+        lines.extend(mac_warns)
+    elif r.profile.available:
+        lines.append("✓ MAC: no client-side issues detected.")
+
     # FINAL
-    final = _localize_bottleneck(r, wifi=wifi)
+    final = _localize_bottleneck(r, wifi=wifi, mac_warns_count=len(mac_warns))
     if final:
         lines.append("")
         lines.append(final)
@@ -141,7 +150,7 @@ def _plateau(points: list[RampPoint]) -> int | None:
     return None
 
 
-def _localize_bottleneck(r: Report, wifi: bool) -> str:
+def _localize_bottleneck(r: Report, wifi: bool, mac_warns_count: int = 0) -> str:
     net_avg = _net_avg(r.network)
     if wifi and net_avg < NET_OK_GBIT:
         return ("→ BOTTLENECK: Wi-Fi link — the wireless connection is the limit. "
@@ -162,6 +171,9 @@ def _localize_bottleneck(r: Report, wifi: bool) -> str:
                 return f"→ BOTTLENECK: NAS volume {Path(v.path).name} — even one editor maxes it out."
             if v.concurrent and len(v.concurrent) >= 2 and v.concurrent[-1].mb_per_sec < v.concurrent[0].mb_per_sec:
                 return f"→ BOTTLENECK: NAS volume {Path(v.path).name} collapses under concurrent load."
+    if mac_warns_count >= 2:
+        return ("→ BOTTLENECK: likely THIS MAC — network and NAS test fine but multiple "
+                "client-side warnings above suggest the slowdown is local.")
     if r.network and r.volumes:
         return "→ NO CLEAR BOTTLENECK in measured layers — investigate Resolve cache size, codecs, client load."
     return ""
@@ -171,6 +183,9 @@ def _localize_bottleneck(r: Report, wifi: bool) -> str:
 
 def to_console(r: Report) -> str:
     out = ["", "=" * 72, "SUMMARY", "=" * 72]
+    if r.profile.available:
+        out.append("\nMac profile:")
+        out.extend(profile_passes(r.profile))
     if r.network:
         out.append(f"\nNetwork (iperf3 vs 10 GbE, nic={r.nic or '?'}):")
         for nr in r.network:
@@ -322,6 +337,12 @@ def to_html(r):
         f"volumes={shares}</div>",
         "<div class='verdict'>", _verdict_html(r), "</div>",
     ]
+    if r.profile.available:
+        parts.append("<h2>Mac profile</h2>")
+        items = "".join(f"<tr><td>{html.escape(l.strip().split(':',1)[0])}</td>"
+                        f"<td style='text-align:left'>{html.escape(l.strip().split(':',1)[1].strip() if ':' in l else l.strip())}</td></tr>"
+                        for l in profile_passes(r.profile))
+        parts.append(f"<table><tbody>{items}</tbody></table>")
     if r.network:
         rows = [(nr.direction, nr.gbit_per_sec) for nr in r.network]
         parts.append("<h2>Network (Gbit/s vs 10 GbE)</h2>")
