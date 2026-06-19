@@ -86,10 +86,17 @@ say "[4/6] psutil (Python lib for client telemetry — optional)"
 if python3 -c "import psutil" &>/dev/null; then
   ok "already installed"
 else
-  if pip3 install --break-system-packages --user psutil 2>&1 | tee -a "$LOG" >/dev/null; then
+  install_psutil() {
+    # Try, in order: modern pip3, legacy pip3, modern python3 -m pip, legacy python3 -m pip.
+    # The first one whose pip understands --break-system-packages wins on macOS 14+;
+    # the legacy forms work on older Pythons whose pip predates that flag.
+    pip3 install --break-system-packages --user psutil >>"$LOG" 2>&1 \
+      || pip3 install --user psutil >>"$LOG" 2>&1 \
+      || python3 -m pip install --break-system-packages --user psutil >>"$LOG" 2>&1 \
+      || python3 -m pip install --user psutil >>"$LOG" 2>&1
+  }
+  if install_psutil && python3 -c "import psutil" &>/dev/null; then
     ok "installed"
-  elif pip3 install --user psutil 2>&1 | tee -a "$LOG" >/dev/null; then
-    ok "installed (legacy mode)"
   else
     warn "psutil install failed — continuing without it. Client CPU/NIC/thermal will be blank in reports."
   fi

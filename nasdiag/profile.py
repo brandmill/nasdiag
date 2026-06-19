@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Mac-side system profile — catches client-side bottlenecks that look like NAS issues.
 
 Each parser is its own small function so any one broken parser is easy to find/fix.

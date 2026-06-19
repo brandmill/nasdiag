@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Local web UI for nasdiag. Pure stdlib, no extra deps."""
 import http.server
 import io
