@@ -225,11 +225,22 @@ function renderShares(shares) {
   if (!shares.length) { root.innerHTML = '<div style="color:#888;font-size:12px">no SMB/NFS shares mounted</div>'; return; }
   root.innerHTML = shares.map((s, i) => `
     <label class="check">
-      <input type="checkbox" name="share" value="${s.path}" ${i === 0 ? 'checked' : ''}/>
+      <input type="checkbox" name="share" value="${s.path}" data-host="${s.host || ''}" ${i === 0 ? 'checked' : ''}/>
       <span>${s.path}</span>
       <span class="meta">${s.type}${s.host ? ' · ' + s.host : ''}</span>
     </label>
   `).join('');
+  document.querySelectorAll('input[name=share]').forEach(cb => {
+    cb.addEventListener('change', syncHostFromShares);
+  });
+  syncHostFromShares();
+}
+
+function syncHostFromShares() {
+  const first = document.querySelector('input[name=share]:checked');
+  if (first && first.dataset.host) {
+    document.getElementById('host').value = first.dataset.host;
+  }
 }
 
 function renderExternals(exts) {

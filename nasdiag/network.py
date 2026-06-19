@@ -49,8 +49,29 @@ def run(host: str, duration_s: int = 10, nas_user: str = "", nas_key: str = "",
         nas_nic: str = "bond0") -> tuple[list[NetResult], str]:
     if not host:
         raise SystemExit("ERROR: --host required (or set NASDIAG_HOST).")
+
+    # Pre-flight: DNS resolve (with auto .local fallback for bare hostnames)
+    resolved, err = tools.resolve_host(host)
+    if err:
+        raise SystemExit(
+            f"NETWORK ERROR: {err}\n"
+            f"  Tip: try the IP directly (e.g. 192.168.8.112) or check that the "
+            f"host is on this network."
+        )
+    if resolved != host:
+        print(f"  resolved {host} → {resolved}")
+        host = resolved
+
+    # Pre-flight: TCP connect to iperf3 port — clearer error than 'exit 1'
+    tcp_err = tools.tcp_reachable(host, 5201, timeout=3)
+    if tcp_err:
+        raise SystemExit(
+            f"NETWORK ERROR: cannot reach {host}:5201 ({tcp_err})\n"
+            f"  iperf3 server is probably not running on the NAS.\n"
+            f"  Start it with:  ssh {host} 'iperf3 -s -D'"
+        )
+
     print(f"NETWORK — iperf3 to {host}, {duration_s}s each direction")
-    print(f"  iperf3 server hint: ssh {host} 'iperf3 -s -D'")
     results = []
     client_nic = ""
     for reverse, label in [(False, "client → NAS  "), (True, "NAS → client  ")]:

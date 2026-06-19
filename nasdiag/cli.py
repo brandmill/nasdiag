@@ -116,30 +116,47 @@ def main(argv=None):
             warn = cfg.cache_warning()
             if warn:
                 print(warn + "\n")
-            net_results, client_nic = network.run(cfg.host, cfg.duration_s, **nas_kw)
-            rpt.network = net_results
-            rpt.nic = client_nic
+            try:
+                net_results, client_nic = network.run(cfg.host, cfg.duration_s, **nas_kw)
+                rpt.network = net_results
+                rpt.nic = client_nic
+            except (RuntimeError, SystemExit) as e:
+                logging.error("network test failed, continuing: %s", e)
+                print(f"\n  ✗ Network test failed: {e}")
+                print("  Continuing with storage tests…\n")
             print()
-            rpt.local_storage = storage.run(cfg.local_path, cfg.size_gb, cfg.duration_s,
-                                            label="local SSD")
+            try:
+                rpt.local_storage = storage.run(cfg.local_path, cfg.size_gb, cfg.duration_s,
+                                                label="local SSD")
+            except (RuntimeError, OSError, SystemExit) as e:
+                logging.error("local SSD test aborted: %s", e)
+                print(f"  ✗ Local SSD aborted: {e}\n")
             print()
             if cfg.external_path:
-                rpt.external_storage = storage.run(cfg.external_path, cfg.size_gb,
-                                                   cfg.duration_s, label="external SSD")
+                try:
+                    rpt.external_storage = storage.run(cfg.external_path, cfg.size_gb,
+                                                       cfg.duration_s, label="external SSD")
+                except (RuntimeError, OSError, SystemExit) as e:
+                    logging.error("external SSD test aborted: %s", e)
+                    print(f"  ✗ External SSD aborted: {e}\n")
                 print()
             else:
                 print("(skipping external SSD)\n")
             for share in cfg.share_paths:
                 v = report.VolumeResults(path=share)
-                v.storage = storage.run(share, cfg.size_gb, cfg.duration_s,
-                                        label=f"NAS {share}",
-                                        telemetry_host=cfg.host, **nas_kw)
-                print()
-                v.concurrent = concurrent.run(share, cfg.size_gb, cfg.duration_s,
-                                              cfg.concurrent_max, label=f"NAS {share}",
-                                              telemetry_host=cfg.host, **nas_kw)
-                print()
-                rpt.volumes.append(v)
+                try:
+                    v.storage = storage.run(share, cfg.size_gb, cfg.duration_s,
+                                            label=f"NAS {share}",
+                                            telemetry_host=cfg.host, **nas_kw)
+                    print()
+                    v.concurrent = concurrent.run(share, cfg.size_gb, cfg.duration_s,
+                                                  cfg.concurrent_max, label=f"NAS {share}",
+                                                  telemetry_host=cfg.host, **nas_kw)
+                    print()
+                except (RuntimeError, OSError, SystemExit) as e:
+                    logging.error("share %s aborted: %s", share, e)
+                    print(f"  ✗ Share {share} aborted: {e}\n")
+                rpt.volumes.append(v)  # append even if partial — report shows what we got
             print(report.to_console(rpt))
             html_path = report.write_html(rpt)
             print(f"\nhtml report: {html_path}")

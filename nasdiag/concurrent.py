@@ -85,14 +85,20 @@ def run(target_dir: str, size_gb: int, duration_s: int, max_workers: int,
     points = []
     try:
         for n in levels:
-            with telemetry.measure(host=telemetry_host, nas_user=nas_user,
-                                   nas_key=nas_key, nas_nic=nas_nic) as m:
-                p = _fio_ramp(target, n, size_gb, duration_s)
-            points.append(p)
-            print(f"  {n:2d} worker(s)  {p.mb_per_sec:8.1f} MB/s   "
-                  f"{p.iops:8.0f} IOPS   p99 {p.latency_ms_p99:7.2f} ms")
-            for line in m.summary_lines():
-                print(f"            {line}")
+            try:
+                with telemetry.measure(host=telemetry_host, nas_user=nas_user,
+                                       nas_key=nas_key, nas_nic=nas_nic) as m:
+                    p = _fio_ramp(target, n, size_gb, duration_s)
+                points.append(p)
+                print(f"  {n:2d} worker(s)  {p.mb_per_sec:8.1f} MB/s   "
+                      f"{p.iops:8.0f} IOPS   p99 {p.latency_ms_p99:7.2f} ms")
+                for line in m.summary_lines():
+                    print(f"            {line}")
+            except (RuntimeError, OSError) as e:
+                log.error("concurrent N=%d on %s failed: %s", n, target_dir, e)
+                msg = str(e).splitlines()[0][:160]
+                print(f"  {n:2d} worker(s)  ✗ FAILED — {msg}")
+                break  # bail out of ramp once it starts failing
     finally:
         for f in target.glob("nasdiag_*.bin"):
             try:

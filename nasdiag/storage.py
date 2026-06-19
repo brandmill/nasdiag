@@ -94,16 +94,21 @@ def run(target_dir: str, size_gb: int, duration_s: int, label: str,
     results = []
     try:
         for t in tests:
-            with telemetry.measure(host=telemetry_host, nas_user=nas_user,
-                                   nas_key=nas_key, nas_nic=nas_nic) as m:
-                r = _fio(target, size_gb, duration_s, t)
-            results.append(r)
-            print(f"  {t:9s}  {r.mb_per_sec:8.1f} MB/s   "
-                  f"{r.iops:8.0f} IOPS   "
-                  f"lat mean {r.latency_ms_mean:6.2f} ms   "
-                  f"p99 {r.latency_ms_p99:6.2f} ms")
-            for line in m.summary_lines():
-                print(f"            {line}")
+            try:
+                with telemetry.measure(host=telemetry_host, nas_user=nas_user,
+                                       nas_key=nas_key, nas_nic=nas_nic) as m:
+                    r = _fio(target, size_gb, duration_s, t)
+                results.append(r)
+                print(f"  {t:9s}  {r.mb_per_sec:8.1f} MB/s   "
+                      f"{r.iops:8.0f} IOPS   "
+                      f"lat mean {r.latency_ms_mean:6.2f} ms   "
+                      f"p99 {r.latency_ms_p99:6.2f} ms")
+                for line in m.summary_lines():
+                    print(f"            {line}")
+            except (RuntimeError, OSError) as e:
+                log.error("storage test %s on %s failed: %s", t, target_dir, e)
+                msg = str(e).splitlines()[0][:160]
+                print(f"  {t:9s}  ✗ FAILED — {msg}")
     finally:
         _cleanup(target)
     return results
