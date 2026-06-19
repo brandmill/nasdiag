@@ -11,43 +11,31 @@ WHAT THIS DOES
 
 
 ─────────────────────────────────────────────────────────────────────────
-  STEP 1 — Open Terminal
+  RECOMMENDED — ONE COMMAND, NO COPY-PASTE FROM TERMINAL
 ─────────────────────────────────────────────────────────────────────────
 
-  Press ⌘ + Space → type "Terminal" → hit Enter.
+  Open Terminal (⌘ + Space → "Terminal" → Enter) and paste this one line:
 
+    curl -fsSL https://raw.githubusercontent.com/brandmill/nasdiag/master/setup.command -o /tmp/nasdiag-setup.command && bash /tmp/nasdiag-setup.command
 
-─────────────────────────────────────────────────────────────────────────
-  STEP 2 — First time only: install Homebrew (skip if already installed)
-─────────────────────────────────────────────────────────────────────────
+  It:
+    • Logs everything it does to ~/nasdiag-setup.log
+    • Installs Homebrew (only if missing — asks for your Mac password)
+    • Installs iperf3 + fio + psutil
+    • Downloads nasdiag into ~/nasdiag
+    • Launches the web UI in your browser
 
-  To check: type `brew --version` and hit Enter. If it prints a version,
-  skip this step. If it says "command not found", paste this:
+  If anything fails, the script prints exactly where the log is. AirDrop
+  that log file (~/nasdiag-setup.log) to Brandy — no Terminal copy needed.
 
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-  It will ask for your Mac password. Takes ~5 minutes.
-  At the end it tells you to run two `echo` lines to "add Homebrew to your
-  PATH" — copy + run those exactly, then close and reopen Terminal.
-
-
-─────────────────────────────────────────────────────────────────────────
-  STEP 3 — Install + launch nasdiag (one paste, every time)
-─────────────────────────────────────────────────────────────────────────
-
-  Paste this whole line, hit Enter, wait ~2 minutes the first time:
-
-    brew install iperf3 fio && pip3 install --break-system-packages psutil && ([ -d ~/nasdiag ] && cd ~/nasdiag && git pull || git clone https://github.com/brandmill/nasdiag ~/nasdiag) && cd ~/nasdiag && python3 -m nasdiag gui
-
-  • The first time `git` runs, macOS may pop up "Install Command Line
-    Tools" — click Install (3-5 minutes). Then re-paste the line above.
-  • Your browser will open automatically to http://127.0.0.1:8765/
-  • To re-run later: just paste the same line. It auto-updates.
+  Re-running the same one-liner later auto-updates everything.
 
 
 ─────────────────────────────────────────────────────────────────────────
-  STEP 4 — In the browser
+  IN THE BROWSER (after setup finishes)
 ─────────────────────────────────────────────────────────────────────────
+
+  Your browser opens to http://127.0.0.1:8765/ automatically.
 
   1.  NAS host + SSH user are auto-filled. Leave them.
   2.  NAS volumes — tick the share(s) you actually edit from (e.g. WIP).
@@ -63,7 +51,7 @@ WHAT THIS DOES
 
 
 ─────────────────────────────────────────────────────────────────────────
-  STEP 5 (optional) — Enable NAS-side telemetry
+  OPTIONAL — Enable NAS-side telemetry
 ─────────────────────────────────────────────────────────────────────────
 
   Lets nasdiag also show NAS CPU / NIC / disk during each test.
@@ -79,44 +67,47 @@ WHAT THIS DOES
     echo 'PASTE THE LINE HERE' >> ~/.ssh/authorized_keys
     chmod 600 ~/.ssh/authorized_keys
 
-  After that, NAS telemetry shows up automatically.
+  After that, NAS telemetry shows up automatically next time you run.
 
 
 ─────────────────────────────────────────────────────────────────────────
-  TROUBLESHOOTING
+  WHEN SOMETHING GOES WRONG
+─────────────────────────────────────────────────────────────────────────
+
+  The setup script writes a log every time it runs:
+
+    ~/nasdiag-setup.log
+
+  To find it in Finder: ⌘⇧G → paste `~/nasdiag-setup.log` → Enter.
+  AirDrop it to Brandy, or email it, or drop it in a NAS share. No
+  need to copy text out of Terminal.
+
+  Each suite run also writes its own log + HTML report:
+
+    ~/.nasdiag/logs/       (one log file per run)
+    ~/.nasdiag/reports/    (one HTML report per run)
+
+
+─────────────────────────────────────────────────────────────────────────
+  QUICK TROUBLESHOOTING
 ─────────────────────────────────────────────────────────────────────────
 
   • Browser didn't open
         Open http://127.0.0.1:8765/ manually.
 
-  • "brew: command not found"
-        Run STEP 2 above.
-
-  • "ssh: connect to host … port 22: Connection refused"
-        Only relevant for STEP 5. Means SSH isn't enabled on the NAS or
-        the Mac. Ask Brandy.
-
-  • Test takes way longer than expected
-        That's a real signal — the slow phase is the bottleneck.
-        Wait for it to finish; the verdict will tell you which one.
+  • macOS asked to "Install Command Line Tools"
+        Click Install (~5 min). When done, re-run the setup line above.
 
   • macOS asks "Terminal would like to access files on …"
         Click Allow. nasdiag needs to read/write its own temp file to
         measure the disk.
 
-  • You see "psutil not installed" in the output
-        That means STEP 3 didn't install psutil. Re-run the STEP 3 paste.
+  • Test takes way longer than expected
+        That's a real signal — the slow phase IS the bottleneck.
+        Wait for it to finish; the verdict will tell you which one.
 
   • Anything else
-        The log file path is printed at the very end of every run
-        (in ~/.nasdiag/logs/). Send that file to Brandy.
-
-
-─────────────────────────────────────────────────────────────────────────
-  WHERE THE RESULTS LIVE
-─────────────────────────────────────────────────────────────────────────
-
-  HTML reports:   ~/.nasdiag/reports/   (one file per run)
-  Log files:      ~/.nasdiag/logs/      (one file per run)
+        Send Brandy the ~/nasdiag-setup.log (or the per-run log in
+        ~/.nasdiag/logs/) and he'll figure it out.
 
 ═════════════════════════════════════════════════════════════════════════
