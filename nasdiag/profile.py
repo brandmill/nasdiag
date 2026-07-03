@@ -132,10 +132,29 @@ def _low_power_mode() -> bool:
     return bool(m and m.group(1) == "1")
 
 
+# Cloud daemons exist on every signed-in Mac (bird idles on every macOS
+# install with iCloud). Presence alone means nothing — only flag daemons
+# actually WORKING while we look.
+SYNC_MIN_CPU_PCT = 2.0
+
+
 def _active_syncs() -> list[str]:
-    out = _run(["ps", "-Aco", "comm"], timeout=4)
-    running = set(line.strip() for line in out.splitlines())
-    return [label for (label, proc) in SYNC_APPS if proc in running]
+    out = _run(["ps", "-Aceo", "pcpu,comm"], timeout=4)
+    cpu: dict[str, float] = {}
+    for line in out.splitlines()[1:]:
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            pct = float(parts[0])
+        except ValueError:
+            continue
+        cpu[parts[1]] = max(cpu.get(parts[1], 0.0), pct)
+    return [
+        f"{label} ({cpu[proc]:.0f}% CPU)"
+        for (label, proc) in SYNC_APPS
+        if cpu.get(proc, 0.0) >= SYNC_MIN_CPU_PCT
+    ]
 
 
 def _time_machine_running() -> bool:
