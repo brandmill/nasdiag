@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from dataclasses import dataclass
 
 from . import telemetry, tools
@@ -22,17 +23,34 @@ class NetResult:
         return 100.0 * self.gbit_per_sec / THEORETICAL_GBIT
 
 
+def _iperf_error(proc: subprocess.CompletedProcess) -> str:
+    """iperf3 -J reports errors in the stdout JSON, not stderr."""
+    try:
+        return json.loads(proc.stdout).get("error", "") or proc.stderr.strip()
+    except (json.JSONDecodeError, TypeError):
+        return proc.stderr.strip()
+
+
 def _run(host: str, duration: int, reverse: bool) -> NetResult:
     iperf3 = tools.require("iperf3")
     cmd = [iperf3, "-c", host, "-t", str(duration), "-J"]
     if reverse:
         cmd.append("-R")
     log.debug("running: %s", " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
+    for attempt in (1, 2):
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode == 0:
+            break
+        msg = _iperf_error(proc)
+        # A recent control connection (e.g. our own reachability probe)
+        # leaves the server busy for a moment; that clears on its own.
+        if attempt == 1 and "busy" in msg.lower():
+            log.debug("iperf3 server busy, retrying in 2s")
+            time.sleep(2.0)
+            continue
         raise RuntimeError(
-            f"iperf3 failed (exit {proc.returncode}). "
-            f"Is iperf3 -s running on {host}?\n{proc.stderr.strip()}"
+            f"iperf3 failed (exit {proc.returncode}): {msg or 'no error output'}. "
+            f"Is iperf3 -s running on {host}?"
         )
     data = json.loads(proc.stdout)
     end = data["end"]
@@ -70,6 +88,9 @@ def run(host: str, duration_s: int = 10, nas_user: str = "", nas_key: str = "",
             f"  iperf3 server is probably not running on the NAS.\n"
             f"  Start it with:  ssh {host} 'iperf3 -s -D'"
         )
+    # The probe above occupies the server's single control slot for a
+    # moment after closing; let it settle before the real client.
+    time.sleep(1.0)
 
     print(f"NETWORK — iperf3 to {host}, {duration_s}s each direction")
     results = []
