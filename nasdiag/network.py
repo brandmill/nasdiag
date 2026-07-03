@@ -80,6 +80,14 @@ def run(host: str, duration_s: int = 10, nas_user: str = "", nas_key: str = "",
         print(f"  resolved {host} → {resolved}")
         host = resolved
 
+    # Pin iperf3 to a concrete, reachable address: iperf3 tries only the
+    # resolver's first answer, and multi-homed mDNS hosts put zone-less
+    # link-local IPv6 first ('No route to host').
+    addr = tools.pick_reachable_addr(host, 5201)
+    if addr and addr != host:
+        print(f"  using {host} at {addr}")
+        host = addr
+
     # Pre-flight: TCP connect to iperf3 port — clearer error than 'exit 1'
     tcp_err = tools.tcp_reachable(host, 5201, timeout=3)
     if tcp_err:

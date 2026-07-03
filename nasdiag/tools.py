@@ -32,6 +32,29 @@ def resolve_host(host: str) -> tuple[str, str | None]:
     return host, f"could not resolve {host!r}"
 
 
+def pick_reachable_addr(host: str, port: int, timeout: float = 1.5) -> str | None:
+    """Resolve host and return the first address that accepts a TCP
+    connection on port, IPv4 candidates first. Multi-homed NAS boxes
+    advertise every NIC over mDNS — including link-local IPv6 without a
+    zone id, which tools like iperf3 try first and fail with 'No route
+    to host'. Returns None if nothing connects."""
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return None
+    addrs: list[str] = []
+    for fam, _, _, _, sa in sorted(infos, key=lambda i: i[0] != socket.AF_INET):
+        if sa[0] not in addrs:
+            addrs.append(sa[0])
+    for addr in addrs:
+        try:
+            with socket.create_connection((addr, port), timeout=timeout):
+                return addr
+        except OSError:
+            continue
+    return None
+
+
 def tcp_reachable(host: str, port: int, timeout: float = 3.0) -> str | None:
     """Returns None if a TCP connection succeeds, else an error string."""
     try:
