@@ -25,29 +25,31 @@ class RampPoint:
 def _fio_ramp(target_dir: Path, n: int, size_gb: int, duration_s: int) -> RampPoint:
     fio = tools.require("fio")
     test_file = target_dir / "nasdiag_concurrent.bin"
+    tools.prefill_for_fio(test_file, size_gb)
     cmd = [
         fio,
         f"--name=ramp_{n}",
-        f"--filename={test_file}",
+        f"--filename={tools.fio_filename(test_file)}",
         f"--size={size_gb}G",
         "--rw=randread",
         "--bs=1M",
         "--iodepth=4",
         "--direct=1",
         "--fadvise_hint=0",
-        "--ioengine=posixaio",
+        f"--ioengine={tools.fio_engine()}",
         f"--numjobs={n}",
         f"--runtime={duration_s}",
         "--time_based",
         "--group_reporting",
         "--output-format=json",
+        *tools.fio_platform_args(),
     ]
     log.debug("running: %s", " ".join(cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         log.error("fio stderr: %s", proc.stderr.strip())
         raise RuntimeError(f"fio failed at N={n}: {proc.stderr.strip()[:200]}")
-    data = json.loads(proc.stdout)
+    data = tools.fio_json(proc.stdout)
     job = data["jobs"][0]
     r = job["read"]
     return RampPoint(

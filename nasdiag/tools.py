@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import json
+import os
 import shutil
 import socket
 import sys
@@ -76,6 +78,50 @@ HINTS = {
         "win32": "choco install fio",
     },
 }
+
+
+def fio_engine() -> str:
+    """fio's async I/O engine for this platform (posixaio does not exist on Windows)."""
+    return "windowsaio" if sys.platform == "win32" else "posixaio"
+
+
+def fio_platform_args() -> list[str]:
+    """Windows fio has no process-shared mutexes and prints a warning (on
+    stdout, ahead of the JSON) unless told to use threads."""
+    return ["--thread"] if sys.platform == "win32" else []
+
+
+def prefill_for_fio(path, size_gb: int) -> None:
+    """Windows only: write fio's test file ourselves before fio runs. fio's own
+    layout step crawled over SMB on Windows (1 GB took 2-3.5 min, so a 15 s
+    test took minutes); big sequential writes take seconds. fio then finds a
+    file of the right size and skips its layout. Random data, so nothing on
+    the way can compress it."""
+    if sys.platform != "win32":
+        return
+    want = size_gb << 30
+    try:
+        if os.path.getsize(path) >= want:
+            return
+    except OSError:
+        pass
+    block = os.urandom(8 << 20)
+    with open(path, "wb") as f:
+        for _ in range(want // len(block)):
+            f.write(block)
+
+
+def fio_json(stdout: str):
+    """fio's JSON, ignoring any warning lines printed before it."""
+    start = stdout.find("{")
+    return json.loads(stdout[start:] if start >= 0 else stdout)
+
+
+def fio_filename(path) -> str:
+    """fio treats ':' as a separator between several files, so a Windows drive
+    letter ("E:\\x") must be escaped ("E\\:\\x")."""
+    s = str(path)
+    return s.replace(":", "\\:") if sys.platform == "win32" else s
 
 
 def require(name: str) -> str:

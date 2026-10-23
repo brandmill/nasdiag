@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -32,12 +33,31 @@ class Sample:
 def _nic_for_host(host: str) -> str | None:
     if not host:
         return None
+    if sys.platform != "darwin":
+        return _nic_by_local_addr(host)
     try:
         out = subprocess.check_output(["route", "-n", "get", host], text=True, timeout=2)
         m = re.search(r"interface:\s+(\S+)", out)
         return m.group(1) if m else None
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
         return None
+
+
+def _nic_by_local_addr(host: str) -> str | None:
+    """The interface whose address the OS would use to reach host. Portable:
+    a UDP connect sends nothing, it only picks the route and source address."""
+    if not HAVE_PSUTIL:
+        return None
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((host, 9))
+            local = s.getsockname()[0]
+    except OSError:
+        return None
+    for name, addrs in psutil.net_if_addrs().items():
+        if any(a.address == local for a in addrs):
+            return name
+    return None
 
 
 def _thermal_limit() -> int:
