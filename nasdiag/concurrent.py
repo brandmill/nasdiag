@@ -85,6 +85,8 @@ def run(target_dir: str, size_gb: int, duration_s: int, max_workers: int,
     points = []
     try:
         for n in levels:
+            who = "1 reader" if n == 1 else f"{n} readers at once"
+            print(f"  … now running: {who} (about {duration_s}s)")
             try:
                 with telemetry.measure(host=telemetry_host, nas_user=nas_user,
                                        nas_key=nas_key, nas_nic=nas_nic) as m:

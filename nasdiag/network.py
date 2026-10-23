@@ -104,6 +104,8 @@ def run(host: str, duration_s: int = 10, nas_user: str = "", nas_key: str = "",
     results = []
     client_nic = ""
     for reverse, label in [(False, "client → NAS  "), (True, "NAS → client  ")]:
+        what = "download from the NAS" if reverse else "upload to the NAS"
+        print(f"  … now running: {what} (about {duration_s}s)")
         with telemetry.measure(host=host, nas_user=nas_user, nas_key=nas_key,
                                nas_nic=nas_nic) as m:
             r = _run(host, duration_s, reverse)

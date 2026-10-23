@@ -82,6 +82,15 @@ def _disk_free_gb(path: Path) -> float | None:
         return None
 
 
+# Plain-language names for the "now running" line, so a GUI reading this
+# output can show what is happening without knowing fio job names.
+_PLAIN = {
+    "seq_read": "large-file read",
+    "seq_write": "large-file write",
+    "rand_read": "small random reads",
+}
+
+
 def run(target_dir: str, size_gb: int, duration_s: int, label: str,
         tests: list[str] | None = None, telemetry_host: str = "",
         nas_user: str = "", nas_key: str = "", nas_nic: str = "bond0") -> list[StorageResult]:
@@ -94,6 +103,7 @@ def run(target_dir: str, size_gb: int, duration_s: int, label: str,
     results = []
     try:
         for t in tests:
+            print(f"  … now running: {_PLAIN.get(t, t)} (about {duration_s}s)")
             try:
                 with telemetry.measure(host=telemetry_host, nas_user=nas_user,
                                        nas_key=nas_key, nas_nic=nas_nic) as m:
