@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import time
 from pathlib import Path
 
-# NASDIAG_HOME moves logs and reports off the system drive (CopyMillWin sets it).
-LOG_DIR = Path(os.environ.get("NASDIAG_HOME") or Path.home() / ".nasdiag") / "logs"
+LOG_DIR = Path.home() / ".nasdiag" / "logs"
 
 
 def setup(verbose: bool = False) -> Path:
@@ -16,7 +14,7 @@ def setup(verbose: bool = False) -> Path:
     root = logging.getLogger()
     root.handlers.clear()
     root.setLevel(logging.DEBUG)
-    fh = logging.FileHandler(logfile, encoding="utf-8")
+    fh = logging.FileHandler(logfile)
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     root.addHandler(fh)

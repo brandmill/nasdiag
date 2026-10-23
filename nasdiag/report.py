@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 import logging
-import os
 import re
 import subprocess
 import sys
@@ -17,7 +16,7 @@ from .storage import StorageResult
 
 log = logging.getLogger(__name__)
 
-REPORT_DIR = Path(os.environ.get("NASDIAG_HOME") or Path.home() / ".nasdiag") / "reports"
+REPORT_DIR = Path.home() / ".nasdiag" / "reports"
 
 NET_OK_GBIT = 8.0
 NET_DEGRADED_GBIT = 5.0
@@ -171,9 +170,9 @@ def _localize_bottleneck(r: Report, wifi: bool, mac_warns_count: int = 0) -> str
         for v in r.volumes:
             sr = v.by_test().get("seq_read")
             if sr and sr.mb_per_sec < NAS_SEQ_OK_MBPS:
-                return f"→ BOTTLENECK: NAS volume {Path(v.path).name or v.path} — even one editor maxes it out."
+                return f"→ BOTTLENECK: NAS volume {Path(v.path).name} — even one editor maxes it out."
             if v.concurrent and len(v.concurrent) >= 2 and v.concurrent[-1].mb_per_sec < v.concurrent[0].mb_per_sec:
-                return f"→ BOTTLENECK: NAS volume {Path(v.path).name or v.path} collapses under concurrent load."
+                return f"→ BOTTLENECK: NAS volume {Path(v.path).name} collapses under concurrent load."
     if mac_warns_count >= 2:
         return ("→ BOTTLENECK: likely THIS MAC — network and NAS test fine but multiple "
                 "client-side warnings above suggest the slowdown is local.")
@@ -371,6 +370,6 @@ def to_html(r):
 def write_html(r):
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORT_DIR / f"report-{time.strftime('%Y%m%d-%H%M%S', time.localtime(r.started_at))}.html"
-    path.write_text(to_html(r), encoding="utf-8")
+    path.write_text(to_html(r))
     log.info("html report: %s", path)
     return path

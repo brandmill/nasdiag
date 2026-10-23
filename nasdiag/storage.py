@@ -32,31 +32,29 @@ def _fio(target_dir: Path, size_gb: int, duration_s: int, test: str) -> StorageR
     fio = tools.require("fio")
     target_dir.mkdir(parents=True, exist_ok=True)
     test_file = target_dir / f"nasdiag_{test}.bin"
-    tools.prefill_for_fio(test_file, size_gb)
     rw, bs, iodepth = TEST_SPECS[test]
     cmd = [
         fio,
         f"--name={test}",
-        f"--filename={tools.fio_filename(test_file)}",
+        f"--filename={test_file}",
         f"--size={size_gb}G",
         f"--rw={rw}",
         f"--bs={bs}",
         f"--iodepth={iodepth}",
-        f"--ioengine={tools.fio_engine()}",
+        "--ioengine=posixaio",
         "--direct=1",
         "--fadvise_hint=0",
         f"--runtime={duration_s}",
         "--time_based",
         "--group_reporting",
         "--output-format=json",
-        *tools.fio_platform_args(),
     ]
     log.debug("running: %s", " ".join(cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         log.error("fio stderr: %s", proc.stderr.strip())
         raise RuntimeError(f"fio failed ({test}): {proc.stderr.strip()[:200]}")
-    data = tools.fio_json(proc.stdout)
+    data = json.loads(proc.stdout)
     job = data["jobs"][0]
     side = "read" if "read" in rw else "write"
     s = job[side]
